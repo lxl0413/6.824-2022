@@ -21,7 +21,7 @@ type Coordinator struct {
 	Workers        []*RegisteredWorker
 	IdleWorkers    *BlockingQueue[*RegisteredWorker] //	数据类型*RegisterWorker
 	addWorkerMutex *sync.Mutex
-	done           bool
+	status         int32 //1-运行ing/0-关闭中/-1已关闭
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -59,7 +59,7 @@ func (c *Coordinator) server() {
 func (c *Coordinator) Done() bool {
 	// Your code here.
 
-	return c.done
+	return atomic.LoadInt32(&c.status) == -1
 }
 
 //
@@ -76,7 +76,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		Workers:        make([]*RegisteredWorker, 0),
 		IdleWorkers:    &idleWorkers,
 		addWorkerMutex: &sync.Mutex{},
-		done:           false,
+		status:         0,
 	}
 
 	c.server()
@@ -88,7 +88,18 @@ func (c *Coordinator) RegisterWorker(args *RegisterWorkerArgs, reply *RegisterWo
 	if len(args.Worker.SockName) == 0 {
 		return nil
 	}
+
+	if atomic.LoadInt32(&c.status) != 1 {
+		reply.WorkerClosing = true
+		return nil
+	}
+
 	c.addWorkerMutex.Lock()
+	// 再判断一次
+	if atomic.LoadInt32(&c.status) != 1 {
+		reply.WorkerClosing = true
+		return nil
+	}
 	registerWorker := &RegisteredWorker{
 		WorkerNum:    len(c.Workers),
 		WorkerStatus: workerStatusAvailable,
@@ -251,6 +262,29 @@ func getReduceTaskNumber(s string) int {
 		return -1
 	}
 	return num
+}
+
+// 关闭所有worker
+func (c *Coordinator) closeMapReduce() {
+	atomic.StoreInt32(&c.status, 0) // 进入正在关闭状态
+
+	c.addWorkerMutex.Lock()
+	defer c.addWorkerMutex.Unlock()
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(c.Workers))
+
+	for _, worker := range c.Workers {
+		go func(worker *RegisteredWorker) {
+			defer wg.Done()
+			args := &CloseWorkerArgs{}
+			reply := &CloseWorkerReply{}
+			callWorker(worker.SockName, CloseWorkerRpcName, args, reply)
+		}(worker)
+	}
+
+	wg.Wait()
+	atomic.StoreInt32(&c.status, -1) //	关闭完成
 }
 
 func callWorker(sockName string, rpcName string, args interface{}, reply interface{}) bool {

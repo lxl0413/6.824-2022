@@ -3,6 +3,7 @@ package mr
 const (
 	RunMapTaskRpcName    = "Worker.RunMapTask"
 	RunReduceTaskRpcName = "Worker.RunReduceTask"
+	CloseWorkerRpcName   = "Worker.CloseWorker"
 
 	RegisterWorkerRpcName = "Coordinator.RegisterWorker"
 )
@@ -17,7 +18,13 @@ type RegisterWorkerArgs struct {
 }
 
 type RegisterWorkerReply struct {
-	IsSuccess bool
+	WorkerClosing bool
+}
+
+type CloseWorkerArgs struct {
+}
+
+type CloseWorkerReply struct {
 }
 
 type RunMapTaskArgs struct {

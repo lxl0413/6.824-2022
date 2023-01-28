@@ -13,10 +13,11 @@ type IMapF func(string, string) []KeyValue
 type IReduceF func(string, []string) string
 
 type WorkerStruct struct {
-	Mapf     IMapF
-	ReduceF  IReduceF
-	SockName string
-	nTask    int32
+	Mapf        IMapF
+	ReduceF     IReduceF
+	SockName    string
+	nTask       int32
+	closeSignal bool
 }
 
 func (w *WorkerStruct) server() {

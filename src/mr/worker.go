@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 import "log"
 import "net/rpc"
@@ -37,11 +38,43 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	worker := WorkerStruct{
-		Mapf:    mapf,
-		ReduceF: reducef,
+		Mapf:        mapf,
+		ReduceF:     reducef,
+		nTask:       10, //	先跑十个协程
+		closeSignal: false,
 	}
-	atomic.AddInt32(&worker.nTask, 10) //	先跑十个协程
 	worker.server()
+	worker.registerWorker()
+	for !worker.done() {
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (w *WorkerStruct) registerWorker() {
+	args := &RegisterWorkerArgs{
+		Worker: IncomeWorker{
+			SockName: w.SockName,
+			nTasks:   10,
+		},
+	}
+	reply := &RegisterWorkerReply{}
+	ret := callCoordinator(RegisterWorkerRpcName, args, reply)
+	if !ret {
+		log.Fatalf("cannot register worker")
+	}
+	if reply.WorkerClosing {
+		w.closeSignal = true
+	}
+}
+
+func (w *WorkerStruct) done() bool {
+	return w.closeSignal
+}
+
+func (w *WorkerStruct) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) error {
+	//TODO:用协程池来管理协程，并退出它们
+	w.closeSignal = true
+	return nil
 }
 
 func (w *WorkerStruct) RunMapTask(args *RunMapTaskArgs, reply *RunMapTaskReply) error {
