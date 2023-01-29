@@ -25,11 +25,13 @@ func NewSynchronousSliceWithMutex[T any](mutex *sync.RWMutex) SynchronousSlice[T
 	}
 }
 
-func (l *SynchronousSlice[T]) Append(data ...T) {
+// return：append的最后个元素的index
+func (l *SynchronousSlice[T]) Append(data ...T) int {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
 	l.elements = append(l.elements, data...)
+	return len(l.elements) - 1
 }
 
 func (l *SynchronousSlice[T]) Set(index int, data T) error {
@@ -60,4 +62,10 @@ func (l *SynchronousSlice[T]) GetElementsSnap() []T {
 	res := make([]T, len(l.elements))
 	copy(res, l.elements) // copy的长度=min(len(src),len(dst))
 	return res
+}
+
+func (l *SynchronousSlice[T]) Len() int {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	return len(l.elements)
 }

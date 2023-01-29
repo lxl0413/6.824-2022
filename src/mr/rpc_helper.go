@@ -1,20 +1,15 @@
 package mr
 
 const (
-	RunMapTaskRpcName    = "Worker.RunMapTask"
-	RunReduceTaskRpcName = "Worker.RunReduceTask"
-	CloseWorkerRpcName   = "Worker.CloseWorker"
+	RunMapTaskRpcName    = "WorkerStruct.RunMapTask"
+	RunReduceTaskRpcName = "WorkerStruct.RunReduceTask"
+	CloseWorkerRpcName   = "WorkerStruct.CloseWorker"
 
 	RegisterWorkerRpcName = "Coordinator.RegisterWorker"
 )
 
-type IncomeWorker struct {
-	SockName string
-	nTasks   int32
-}
-
 type RegisterWorkerArgs struct {
-	Worker IncomeWorker
+	SockName string
 }
 
 type RegisterWorkerReply struct {
@@ -44,5 +39,6 @@ type RunReduceTaskArgs struct {
 }
 
 type RunReduceTaskReply struct {
-	IsBusy bool
+	IsBusy         bool
+	OutputFileName string
 }

@@ -38,24 +38,26 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 	worker := WorkerStruct{
-		Mapf:        mapf,
-		ReduceF:     reducef,
-		nTask:       10, //	先跑十个协程
-		closeSignal: false,
+		Mapf:    mapf,
+		ReduceF: reducef,
+		uid:     os.Getuid(),
+		status:  1,
 	}
 	worker.server()
+	err := clearAndMakeNewDir(worker.getWorkerTmpFileDirPath())
+	if err != nil {
+		log.Printf("fail to create worker's tmp file, err: %v", err)
+	}
 	worker.registerWorker()
 	for !worker.done() {
+		//log.Printf("Worker hasn't done, running tasks = %d", 10-worker.nTask)
 		time.Sleep(2 * time.Second)
 	}
 }
 
 func (w *WorkerStruct) registerWorker() {
 	args := &RegisterWorkerArgs{
-		Worker: IncomeWorker{
-			SockName: w.SockName,
-			nTasks:   10,
-		},
+		SockName: w.SockName,
 	}
 	reply := &RegisterWorkerReply{}
 	ret := callCoordinator(RegisterWorkerRpcName, args, reply)
@@ -63,27 +65,27 @@ func (w *WorkerStruct) registerWorker() {
 		log.Fatalf("cannot register worker")
 	}
 	if reply.WorkerClosing {
-		w.closeSignal = true
+		atomic.StoreInt32(&w.status, 0)
 	}
 }
 
 func (w *WorkerStruct) done() bool {
-	return w.closeSignal
+	return atomic.LoadInt32(&w.status) == 0
 }
 
 func (w *WorkerStruct) CloseWorker(args *CloseWorkerArgs, reply *CloseWorkerReply) error {
 	//TODO:用协程池来管理协程，并退出它们
-	w.closeSignal = true
+	atomic.StoreInt32(&w.status, 0)
 	return nil
 }
 
 func (w *WorkerStruct) RunMapTask(args *RunMapTaskArgs, reply *RunMapTaskReply) error {
-	if atomic.LoadInt32(&w.nTask) <= 0 {
+	if atomic.LoadInt32(&w.status) == 2 {
 		reply.IsBusy = true
 		return nil
 	}
-	atomic.AddInt32(&w.nTask, -1)
-	defer atomic.AddInt32(&w.nTask, 1)
+	atomic.AddInt32(&w.status, 2)
+	defer atomic.CompareAndSwapInt32(&w.status, 2, 1)
 
 	file, err := os.Open(args.FileName)
 	if err != nil {
@@ -112,19 +114,22 @@ func (w *WorkerStruct) RunMapTask(args *RunMapTaskArgs, reply *RunMapTaskReply) 
 			continue
 		}
 
+		if err != nil {
+			log.Fatalf("failed to create tmp dir")
+		}
 		// 把中间值写入文件中
 		// mr-X-Y, X is the Map task number, Y is the reduce task number.
-		fileName := fmt.Sprintf("mr-%d-%d", args.MapTaskNumber, index)
+		fileName := fmt.Sprintf("%s/mr-%d-%d", w.getWorkerTmpFileDirPath(), args.MapTaskNumber, index)
 		fileNames = append(fileNames, fileName)
 		go func(fileName string, kvs []KeyValue) {
 			defer wg.Done()
-			file, err := os.Create(fileName)
+			intermediateFile, err := os.Create(fileName)
 			defer file.Close()
 			if err != nil {
-				log.Fatalf("cannot create file %s", fileName)
+				log.Fatalf("cannot create file %s, err: %v", fileName, err)
 			}
 
-			enc := json.NewEncoder(file)
+			enc := json.NewEncoder(intermediateFile)
 			err = enc.Encode(&kvs)
 			if err != nil {
 				log.Fatalf("cannot encode intermediate keys")
@@ -138,12 +143,12 @@ func (w *WorkerStruct) RunMapTask(args *RunMapTaskArgs, reply *RunMapTaskReply) 
 }
 
 func (w *WorkerStruct) RunReduceTask(args *RunReduceTaskArgs, reply *RunReduceTaskReply) error {
-	if atomic.LoadInt32(&w.nTask) <= 0 {
+	if atomic.LoadInt32(&w.status) == 2 {
 		reply.IsBusy = true
 		return nil
 	}
-	atomic.AddInt32(&w.nTask, -1)
-	defer atomic.AddInt32(&w.nTask, 1)
+	atomic.AddInt32(&w.status, 2)
+	defer atomic.CompareAndSwapInt32(&w.status, 2, 1)
 
 	intermediate := []KeyValue{}
 	for _, fileName := range args.FileNames {
@@ -164,7 +169,7 @@ func (w *WorkerStruct) RunReduceTask(args *RunReduceTaskArgs, reply *RunReduceTa
 
 	sort.Sort(ByKey(intermediate))
 
-	oFileName := fmt.Sprintf("mr-out-%d", args.ReduceTaskNumber)
+	oFileName := getOutputFileName(args.ReduceTaskNumber)
 	oFile, err := os.Create(oFileName)
 	if err != nil {
 		log.Fatalf("cannot create file %s", oFileName)
@@ -186,7 +191,7 @@ func (w *WorkerStruct) RunReduceTask(args *RunReduceTaskArgs, reply *RunReduceTa
 
 		i = j
 	}
-
+	reply.OutputFileName = oFileName
 	oFile.Close()
 	return nil
 }
