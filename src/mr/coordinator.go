@@ -169,7 +169,7 @@ func (c *Coordinator) run() {
 			//log.Printf("reduce-task-%d start", reduceTaskNum)
 
 			ch := make(chan int, 1) // 一定要初始化！
-			once := int32(0)        //只能有协程进入shuffle阶段
+			once := int32(0)        //只能有一个协程进入shuffle阶段
 			iFileNames := intermediateFileNames[reduceTaskNum].GetElementsSnap()
 
 			go func() {
@@ -382,6 +382,9 @@ func (c *Coordinator) closeMapReduce() {
 		}
 		args := &CloseWorkerArgs{}
 		reply := &CloseWorkerReply{}
+		if atomic.LoadInt32(&worker.WorkerStatus) == workerStatusUnavailable {
+			return true
+		}
 		c.callWorker(worker.SockName, CloseWorkerRpcName, args, reply)
 		return true
 	}
